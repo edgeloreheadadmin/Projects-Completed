@@ -26,13 +26,23 @@ namespace Auras.BiofieldAuraMatrix
         [SerializeField]
         private bool autoPlayBoundParticles = true;
 
+        [Header("Precision & Easing")]
         [SerializeField]
-        [Min(0.1f)]
-        private float blendSpeed = 6f;
+        [Min(0.01f)]
+        private float transitionDuration = 0.5f;
 
         [SerializeField]
-        [Range(0f, 0.35f)]
-        private float pulseAmplitude = 0.08f;
+        private EasingType defaultEasingType = EasingType.EaseInOutCubic;
+
+        [SerializeField]
+        [Tooltip("Spring stiffness for physics-based easing")]
+        [Range(0.1f, 10f)]
+        private float springStiffness = 3f;
+
+        [SerializeField]
+        [Tooltip("Spring damping for physics-based easing")]
+        [Range(0f, 1f)]
+        private float springDamping = 0.6f;
 
         [Header("Bindings")]
         [SerializeField]
@@ -40,6 +50,7 @@ namespace Auras.BiofieldAuraMatrix
 
         private LayerContextCollection layerContexts;
         private MaterialPropertyBlock propertyBlock;
+        private double lastUpdateTime = 0.0;
 
         public BiofieldAuraProfile Profile => profile;
 
@@ -246,16 +257,33 @@ namespace Auras.BiofieldAuraMatrix
                 InitializeContexts();
             }
 
-            float step = blendSpeed * GetSimulationDelta();
+            double currentTime = Time.realtimeSinceStartup;
+            double deltaTime = currentTime - lastUpdateTime;
+            lastUpdateTime = currentTime;
+
+            if (deltaTime < 0.0)
+            {
+                deltaTime = GetSimulationDelta();
+            }
+
+            double blendFactor = Mathf.Clamp01((float)(deltaTime / transitionDuration));
+
             layerContexts.ForEachOrdered(ctx =>
             {
-                double newIntensity = ctx.intensityEasing.InterpolateHighPrecision(
-                    ctx.CurrentIntensity, ctx.TargetIntensity, step);
-                double newIntegrity = ctx.integrityEasing.InterpolateHighPrecision(
-                    ctx.CurrentIntegrity, ctx.TargetIntegrity, step);
+                if (ctx.CurrentIntensity != ctx.TargetIntensity)
+                {
+                    double newIntensity = ctx.intensityEasing.InterpolateHighPrecision(
+                        ctx.CurrentIntensity, ctx.TargetIntensity, blendFactor);
+                    ctx.CurrentIntensity = PrecisionCalculator.Clamp01(newIntensity);
+                }
 
-                ctx.CurrentIntensity = newIntensity;
-                ctx.CurrentIntegrity = newIntegrity;
+                if (ctx.CurrentIntegrity != ctx.TargetIntegrity)
+                {
+                    double newIntegrity = ctx.integrityEasing.InterpolateHighPrecision(
+                        ctx.CurrentIntegrity, ctx.TargetIntegrity, blendFactor);
+                    ctx.CurrentIntegrity = PrecisionCalculator.Clamp01(newIntegrity);
+                }
+
                 ctx.InvalidateEnergy();
             });
 
@@ -278,7 +306,39 @@ namespace Auras.BiofieldAuraMatrix
                 {
                     layerContexts.RegisterLayerName(kvp.Key, kvp.Value);
                 }
+
+                ConfigureEasingCurves();
+                lastUpdateTime = Time.realtimeSinceStartup;
             }
+        }
+
+        /// <summary>
+        /// Configure easing curves for all layer contexts based on current settings.
+        /// </summary>
+        private void ConfigureEasingCurves()
+        {
+            EasingCurve intensityEasing = CreateEasingCurve();
+            EasingCurve integrityEasing = CreateEasingCurve();
+
+            layerContexts.ForEach(ctx =>
+            {
+                ctx.intensityEasing = intensityEasing;
+                ctx.integrityEasing = integrityEasing;
+            });
+        }
+
+        /// <summary>
+        /// Create an easing curve based on current settings.
+        /// </summary>
+        private EasingCurve CreateEasingCurve()
+        {
+            var curve = new EasingCurve
+            {
+                type = defaultEasingType,
+                springStiffness = springStiffness,
+                springDamping = springDamping,
+            };
+            return curve;
         }
 
         private void SeedNeutralTargets()
@@ -378,13 +438,18 @@ namespace Auras.BiofieldAuraMatrix
 
         private void ApplyBinding(BiofieldLayerBinding binding, BiofieldLayerDefinition definition, AuraLayerContext context)
         {
-            double energy = context.GetEnergy();
-            double integrityTint = Mathf.Clamp01(0.24f + ((float)context.CurrentIntegrity * 0.76f));
+            double energyHiPrecision = context.GetEnergy();
+            double integrityTintHiPrecision = PrecisionCalculator.ComputeIntegrityTint(context.CurrentIntegrity);
+
+            float energy = (float)energyHiPrecision;
+            float integrityTint = (float)integrityTintHiPrecision;
+
             Color lowEnergyColor = Color.Lerp(Color.black, definition.balancedColor, 0.24f);
-            Color drivenColor = Color.Lerp(lowEnergyColor, definition.balancedColor, (float)integrityTint);
+            Color drivenColor = Color.Lerp(lowEnergyColor, definition.balancedColor, integrityTint);
+
             float time = Application.isPlaying ? Time.time : Time.realtimeSinceStartup;
             float pulse = 1f + (pulseAmplitude * (float)context.CurrentIntensity * Mathf.Sin((time * definition.pulseSpeed) + ((int)binding.layer * 0.85f)));
-            float scale = Mathf.Lerp(definition.baseScale, definition.peakScale, (float)energy) * binding.scaleMultiplier * pulse;
+            float scale = Mathf.Lerp(definition.baseScale, definition.peakScale, energy) * binding.scaleMultiplier * pulse;
 
             if (binding.anchor != null && binding.driveAnchorScale)
             {
@@ -405,25 +470,25 @@ namespace Auras.BiofieldAuraMatrix
                     main.startSize = Mathf.Max(0.01f, scale * definition.shellThickness);
                 }
 
-                main.simulationSpeed = Mathf.Lerp(0.82f, 1.6f, (float)energy);
+                main.simulationSpeed = Mathf.Lerp(0.82f, 1.6f, energy);
 
                 if (binding.driveParticleEmission)
                 {
                     ParticleSystem.EmissionModule emission = binding.particleSystem.emission;
-                    emission.rateOverTime = Mathf.Lerp(definition.baseEmission, definition.peakEmission, (float)energy) * binding.emissionMultiplier;
+                    emission.rateOverTime = Mathf.Lerp(definition.baseEmission, definition.peakEmission, energy) * binding.emissionMultiplier;
                 }
             }
 
             if (binding.light != null && binding.driveLight)
             {
                 binding.light.color = drivenColor;
-                binding.light.intensity = Mathf.Lerp(definition.baseLightIntensity, definition.peakLightIntensity, (float)energy) * binding.lightMultiplier;
-                binding.light.range = Mathf.Lerp(definition.baseScale * 1.35f, definition.peakScale * 2.1f, (float)energy);
+                binding.light.intensity = Mathf.Lerp(definition.baseLightIntensity, definition.peakLightIntensity, energy) * binding.lightMultiplier;
+                binding.light.range = Mathf.Lerp(definition.baseScale * 1.35f, definition.peakScale * 2.1f, energy);
             }
 
             if (binding.renderer != null && binding.driveRendererColor)
             {
-                ApplyRendererColor(binding.renderer, drivenColor, (float)energy);
+                ApplyRendererColor(binding.renderer, drivenColor, energy);
             }
         }
 
