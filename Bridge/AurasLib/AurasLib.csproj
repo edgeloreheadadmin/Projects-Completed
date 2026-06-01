@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>AurasLib</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Optimize>true</Optimize>
+    <!-- Disable auto-include so we can control exactly which files are compiled. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../UnityStubs/UnityStubs.csproj" />
+  </ItemGroup>
+
+  <!-- Core runtime scripts (paths have no spaces) -->
+  <ItemGroup>
+    <Compile Include="../../Assets/Auras/Core/Runtime/AuraLayerContext.cs" />
+    <Compile Include="../../Assets/Auras/Core/Runtime/AuraMetadataAttributes.cs" />
+    <Compile Include="../../Assets/Auras/Core/Runtime/EasingCurve.cs" />
+    <Compile Include="../../Assets/Auras/Core/Runtime/LayerContextCollection.cs" />
+  </ItemGroup>
+
+  <!-- Biofield Aura Matrix runtime scripts (copied to src/ to avoid backslash-space in path) -->
+  <ItemGroup>
+    <Compile Include="src/BiofieldAuraTypes.cs" />
+    <Compile Include="src/BiofieldAuraProfile.cs" />
+    <Compile Include="src/BiofieldAuraController.cs" />
+    <Compile Include="src/BiofieldAuraDriver.cs" />
+    <Compile Include="src/InteractionProfile.cs" />
+  </ItemGroup>
+
+  <!-- New standalone simulator (Python entry point) -->
+  <ItemGroup>
+    <Compile Include="AuraSimulator.cs" />
+  </ItemGroup>
+</Project>
